@@ -7,6 +7,13 @@ import Token from "./model/token";
 import helmet from "helmet";
 import cors from "cors";
 
+var Raven = require("raven");
+Raven.config("https://ad666e34f38647c9937c00ec5ec9af44@sentry.io/1242253", {
+  release: "0.1.0",
+  environment: process.env.NODE_ENV,
+  tags: { git_commit: "006a10d27dcf2f2e7bf2dfaf601f8c3b7979c8e0" }
+}).install();
+
 const options = {
   cert: fs.readFileSync("./sslcert/fullchain.pem"),
   key: fs.readFileSync("./sslcert/privkey.pem")

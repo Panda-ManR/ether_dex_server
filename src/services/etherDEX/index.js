@@ -2,13 +2,38 @@ import Order from "../../model/order";
 import Trade from "../../model/trade";
 import Fund from "../../model/fund";
 import BigNumber from "bignumber.js";
-import web3 from "../web3";
+import Web3 from "web3";
 const EtherDEX = require("../../contracts/EtherDEX.json");
+
+let web3 = new Web3(
+  new Web3.providers.WebsocketProvider(
+    process.env.NODE_ENV === "production"
+      ? "wss://mainnet.infura.io/ws"
+      : "wss://ropsten.infura.io/ws"
+  )
+);
 
 const etherDEX = {
   start: function(io) {
     console.log("EtherDEX WS API started");
     this.web3Listener(io);
+
+    setInterval(() => {
+      web3.eth.net
+        .isListening()
+        .then(value => {})
+        .catch(e => {
+          console.log("Lost connection: " + e);
+          web3.setProvider(
+            new Web3.providers.WebsocketProvider(
+              process.env.NODE_ENV === "production"
+                ? "wss://mainnet.infura.io/ws"
+                : "wss://ropsten.infura.io/ws"
+            )
+          );
+          this.web3Listener(io);
+        });
+    }, 5000);
 
     io.on("connection", socket => {
       socket.on("getMarket", async params => {
@@ -129,66 +154,81 @@ const etherDEX = {
         : "0x03e1D29297d0f3d2D5e18a5CAbaD2307d9dA82a3"
     );
 
-    contractEtherDEX.events.Trade(async (err, result) => {
-      const trade = result.returnValues;
+    contractEtherDEX.events
+      .Trade(async (err, result) => {
+        const trade = result.returnValues;
 
-      let newTrade = new Trade({
-        txHash: result.transactionHash,
-        date: new Date(),
-        price: this.calculatePrice(trade),
-        side: this.isSell(trade) ? "sell" : "buy",
-        amount: this.isSell(trade) ? trade.amountGive : trade.amountGet,
-        amountBase: this.isSell(trade) ? trade.amountGet : trade.amountGive,
-        buyer: this.isSell(trade) ? trade.give : trade.get,
-        seller: this.isSell(trade) ? trade.get : trade.give,
-        tokenAddr: this.isSell(trade) ? trade.tokenGive : trade.tokenGet
+        let newTrade = new Trade({
+          txHash: result.transactionHash,
+          date: new Date(),
+          price: this.calculatePrice(trade),
+          side: this.isSell(trade) ? "sell" : "buy",
+          amount: this.isSell(trade) ? trade.amountGive : trade.amountGet,
+          amountBase: this.isSell(trade) ? trade.amountGet : trade.amountGive,
+          buyer: this.isSell(trade) ? trade.give : trade.get,
+          seller: this.isSell(trade) ? trade.get : trade.give,
+          tokenAddr: this.isSell(trade) ? trade.tokenGive : trade.tokenGet
+        });
+
+        newTrade.save((err, trade) => {});
+
+        let trades = await Trade.find({}).exec();
+        io.emit("trades", trades);
+      })
+      .on("error", e => {
+        console.log("error");
+        return;
       });
 
-      newTrade.save((err, trade) => {});
+    contractEtherDEX.events
+      .Deposit(async (err, result) => {
+        const deposit = result.returnValues;
 
-      let trades = await Trade.find({}).exec();
-      io.emit("trades", trades);
-    });
+        let newFund = new Fund({
+          txHash: result.transactionHash,
+          date: new Date(),
+          tokenAddr: deposit.token,
+          kind: "Deposit",
+          user: deposit.user,
+          amount: deposit.amount,
+          balance: deposit.balance
+        });
 
-    contractEtherDEX.events.Deposit(async (err, result) => {
-      const deposit = result.returnValues;
+        newFund.save((err, fund) => {});
 
-      let newFund = new Fund({
-        txHash: result.transactionHash,
-        date: new Date(),
-        tokenAddr: deposit.token,
-        kind: "Deposit",
-        user: deposit.user,
-        amount: deposit.amount,
-        balance: deposit.balance
+        let funds = await Fund.find({}).exec();
+        io.emit("funds", funds);
+        io.emit("newFund", newFund);
+      })
+      .on("error", e => {
+        console.log("error");
+        return;
       });
 
-      newFund.save((err, fund) => {});
+    contractEtherDEX.events
+      .Withdraw(async (err, result) => {
+        const withdraw = result.returnValues;
 
-      let funds = await Fund.find({}).exec();
-      io.emit("funds", funds);
-      io.emit("newFund", newFund);
-    });
+        let newFund = new Fund({
+          txHash: result.transactionHash,
+          date: new Date(),
+          tokenAddr: withdraw.token,
+          kind: "Withdraw",
+          user: withdraw.user,
+          amount: withdraw.amount,
+          balance: withdraw.balance
+        });
 
-    contractEtherDEX.events.Withdraw(async (err, result) => {
-      const withdraw = result.returnValues;
+        newFund.save((err, fund) => {});
 
-      let newFund = new Fund({
-        txHash: result.transactionHash,
-        date: new Date(),
-        tokenAddr: withdraw.token,
-        kind: "Withdraw",
-        user: withdraw.user,
-        amount: withdraw.amount,
-        balance: withdraw.balance
+        let funds = await Fund.find({}).exec();
+        io.emit("funds", funds);
+        io.emit("newFund", newFund);
+      })
+      .on("error", e => {
+        console.log("error");
+        return;
       });
-
-      newFund.save((err, fund) => {});
-
-      let funds = await Fund.find({}).exec();
-      io.emit("funds", funds);
-      io.emit("newFund", newFund);
-    });
 
     web3.eth.subscribe("newBlockHeaders", (error, data) => {
       if (!error) {
@@ -201,6 +241,9 @@ const etherDEX = {
             io.emit("requestMarketRefresh", currentBlock);
           }
         );
+      } else {
+        console.log("error");
+        return;
       }
     });
   },
